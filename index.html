@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Simplex con Gráfica y Vértices</title>
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <style>
+    body { font-family: Arial; padding: 20px; background-color: #f9f9f9; }
+    input, select { margin: 4px; width: 60px; }
+    .bloque { margin-bottom: 15px; }
+    table { border-collapse: collapse; margin-top: 20px; }
+    td, th { border: 1px solid #aaa; padding: 6px 10px; text-align: center; }
+    .pivot { background-color: #ffd700; }
+  </style>
+</head>
+<body>
+  <h2>Método Simplex Gráfico Interactivo</h2>
+
+  <div class="bloque">
+    <label>Tipo de problema:</label>
+    <select id="tipo">
+      <option value="max">Maximizar</option>
+      <option value="min">Minimizar</option>
+    </select>
+  </div>
+
+  <div class="bloque">
+    <label>Función Objetivo Z = </label>
+    <input type="number" id="c1" value="3" step="any" />x +
+    <input type="number" id="c2" value="5" step="any" />y
+  </div>
+
+  <div class="bloque">
+    <label>Restricciones (ax + by ≤/≥ c):</label><br />
+    <div id="restricciones">
+      <div>
+        <input type="number" value="2" class="a" step="any" />x +
+        <input type="number" value="1" class="b" step="any" />y
+        <select class="signo">
+          <option value="<=" selected>≤</option>
+          <option value=">=">&#8805;</option>
+        </select>
+        <input type="number" value="8" class="c" step="any" />
+      </div>
+      <div>
+        <input type="number" value="1" class="a" step="any" />x +
+        <input type="number" value="2" class="b" step="any" />y
+        <select class="signo">
+          <option value="<=" selected>≤</option>
+          <option value=">=">&#8805;</option>
+        </select>
+        <input type="number" value="6" class="c" step="any" />
+      </div>
+    </div>
+    <button onclick="agregarRestriccion()">Agregar restricción</button>
+  </div>
+
+  <button onclick="resolverGrafico()">Mostrar Gráfica</button>
+  <button onclick="resolverSimplex()">Resolver con Simplex</button>
+
+  <div id="grafica" style="width:100%;height:500px;margin-top:20px;"></div>
+  <div id="vertices"></div>
+  <div id="tablaSimplex"></div>
+  <div id="analisis"></div>
+
+  <script>
+    function agregarRestriccion() {
+      const cont = document.getElementById("restricciones");
+      const div = document.createElement("div");
+      div.innerHTML = `
+        <input type="number" value="0" class="a" step="any" />x +
+        <input type="number" value="0" class="b" step="any" />y
+        <select class="signo">
+          <option value="<=" selected>≤</option>
+          <option value=">=">&#8805;</option>
+        </select>
+        <input type="number" value="0" class="c" step="any" />
+      `;
+      cont.appendChild(div);
+    }
+
+    // Dibuja líneas completas de restricciones desde x=0 a x=20 o y=0 a y=20 con manejo vertical/horizontal
+    function generarLineaRestriccion(a, b, c) {
+      const xmin = 0, xmax = 20;
+      const ymin = 0, ymax = 20;
+      let xvals = [];
+      let yvals = [];
+
+      if (Math.abs(b) > 1e-10) {
+        // y = (c - a*x)/b
+        // Calcular y en xmin y xmax
+        const y0 = (c - a * xmin) / b;
+        const y1 = (c - a * xmax) / b;
+
+        // Recortar al rango y>=0 y y<=20
+        let points = [];
+
+        // puntos potenciales (xmin,y0), (xmax,y1)
+        if (y0 >= ymin - 1e-6 && y0 <= ymax + 1e-6) points.push({ x: xmin, y: y0 });
+        if (y1 >= ymin - 1e-6 && y1 <= ymax + 1e-6) points.push({ x: xmax, y: y1 });
+
+        // Además intersección con y=ymin y y=ymax
+        // x cuando y = ymin => x = (c - b*ymin)/a si a!=0
+        if (Math.abs(a) > 1e-10) {
+          const x_at_ymin = (c - b * ymin) / a;
+          if (x_at_ymin >= xmin - 1e-6 && x_at_ymin <= xmax + 1e-6) points.push({ x: x_at_ymin, y: ymin });
+          const x_at_ymax = (c - b * ymax) / a;
+          if (x_at_ymax >= xmin - 1e-6 && x_at_ymax <= xmax + 1e-6) points.push({ x: x_at_ymax, y: ymax });
+        }
+
+        // Ordenar puntos por x para dibujar línea
+        points = points.filter(p => p.x >= xmin - 1e-6 && p.x <= xmax + 1e-6 && p.y >= ymin - 1e-6 && p.y <= ymax + 1e-6);
+        points.sort((p1, p2) => p1.x - p2.x);
+
+        if (points.length >= 2) {
+          xvals = [points[0].x, points[1].x];
+          yvals = [points[0].y, points[1].y];
+        } else if (points.length === 1) {
+          xvals = [points[0].x];
+          yvals = [points[0].y];
+        }
+      } else if (Math.abs(a) > 1e-10) {
+        // Línea vertical x = c/a
+        const xconst = c / a;
+        if (xconst >= xmin && xconst <= xmax) {
+          xvals = [xconst, xconst];
+          yvals = [ymin, ymax];
+        }
+      }
+      return { xvals, yvals };
+    }
+
+    function resolverGrafico() {
+      const c1 = parseFloat(document.getElementById("c1").value);
+      const c2 = parseFloat(document.getElementById("c2").value);
+      const tipo = document.getElementById("tipo").value;
+      const aEls = document.querySelectorAll(".a");
+      const bEls = document.querySelectorAll(".b");
+      const cEls = document.querySelectorAll(".c");
+      const signoEls = document.querySelectorAll(".signo");
+
+      let restricciones = [];
+      let trazasRestricciones = [];
+
+      for (let i = 0; i < aEls.length; i++) {
+        let a = parseFloat(aEls[i].value);
+        let b = parseFloat(bEls[i].value);
+        let c = parseFloat(cEls[i].value);
+        let signo = signoEls[i].value;
+        if (signo === ">=") {
+          a = -a; b = -b; c = -c;
+        }
+        restricciones.push({ a, b, c });
+
+        // Generar línea completa para la restricción
+        const { xvals, yvals } = generarLineaRestriccion(a, b, c);
+        if (xvals.length === 2 && yvals.length === 2) {
+          trazasRestricciones.push({
+            x: xvals,
+            y: yvals,
+            type: 'scatter',
+            mode: 'lines',
+            name: `R${i + 1}`,
+            line: { dash: 'dashdot' }
+          });
+        }
+      }
+
+      // Función intersección dos restricciones
+      const interseccion = (r1, r2) => {
+        const det = r1.a * r2.b - r2.a * r1.b;
+        if (Math.abs(det) < 1e-10) return null;
+        const x = (r1.c * r2.b - r2.c * r1.b) / det;
+        const y = (r1.a * r2.c - r2.a * r1.c) / det;
+        return { x, y };
+      };
+
+      // Comprueba si un punto cumple todas las restricciones y no es negativo
+      const cumple = (p) => {
+        if (p.x < -1e-6 || p.y < -1e-6) return false;
+        for (const r of restricciones) {
+          if (r.a * p.x + r.b * p.y - r.c > 1e-6) return false;
+        }
+        return true;
+      };
+
+      let vertices = [];
+
+      // Intersección entre restricciones
+      for (let i = 0; i < restricciones.length; i++) {
+        for (let j = i + 1; j < restricciones.length; j++) {
+          const p = interseccion(restricciones[i], restricciones[j]);
+          if (p && cumple(p)) vertices.push(p);
+        }
+      }
+
+      // Agregar intersecciones con ejes si cumplen restricciones
+      for (const r of restricciones) {
+        if (Math.abs(r.b) > 1e-6) {
+          const y = r.c / r.b;
+          if (y >= 0 && cumple({ x: 0, y })) vertices.push({ x: 0, y });
+        }
+        if (Math.abs(r.a) > 1e-6) {
+          const x = r.c / r.a;
+          if (x >= 0 && cumple({ x, y: 0 })) vertices.push({ x, y: 0 });
+        }
+      }
+
+      // Siempre incluir origen si es factible
+      vertices.push({ x: 0, y: 0 });
+      vertices = vertices.filter(cumple);
+
+      // Eliminar duplicados
+      vertices = vertices.filter((v, i, arr) =>
+        arr.findIndex(p => Math.abs(p.x - v.x) < 1e-5 && Math.abs(p.y - v.y) < 1e-5) === i
+      );
+
+      // Calcular valor Z en cada vértice
+      vertices = vertices.map(v => ({ ...v, z: c1 * v.x + c2 * v.y }));
+      let optimo = vertices[0];
+      for (let v of vertices) {
+        if ((tipo === "max" && v.z > optimo.z) || (tipo === "min" && v.z < optimo.z)) {
+          optimo = v;
+        }
+      }
+
+      // Ordenar vértices para trazar polígono región factible
+      const centro = vertices.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+      centro.x /= vertices.length;
+      centro.y /= vertices.length;
+
+      vertices.sort((p1, p2) => {
+        const a1 = Math.atan2(p1.y - centro.y, p1.x - centro.x);
+        const a2 = Math.atan2(p2.y - centro.y, p2.x - centro.x);
+        return a1 - a2;
+      });
+
+      const traceRegion = {
+        x: [...vertices.map(v => v.x), vertices[0].x],
+        y: [...vertices.map(v => v.y), vertices[0].y],
+        fill: 'toself',
+        type: 'scatter',
+        fillcolor: 'rgba(0,150,255,0.2)',
+        line: { color: 'blue' },
+        name: 'Región Factible'
+      };
+
+      const tracePuntos = {
+        x: vertices.map(v => v.x),
+        y: vertices.map(v => v.y),
+        mode: 'markers+text',
+        type: 'scatter',
+        name: 'Vértices',
+        marker: { color: 'red', size: 8 },
+        text: vertices.map(v => `Z=${v.z.toFixed(2)}`),
+        textposition: 'top right'
+      };
+
+      const traceOptimo = {
+        x: [optimo.x],
+        y: [optimo.y],
+        mode: 'markers+text',
+        type: 'scatter',
+        name: 'Óptimo',
+        marker: { color: 'green', size: 14, symbol: 'diamond' },
+        text: [`Óptimo Z=${optimo.z.toFixed(2)}`],
+        textposition: 'bottom center'
+      };
+
+      Plotly.newPlot('grafica', [...trazasRestricciones, traceRegion, tracePuntos, traceOptimo], {
+        title: 'Gráfica de la Región Factible',
+        xaxis: { title: 'x', range: [0, 20] },
+        yaxis: { title: 'y', range: [0, 20] }
+      });
+
+      // Mostrar vértices evaluados
+      let html = "<h3>Vértices Evaluados</h3><ul>";
+      vertices.forEach(v => {
+        const isOpt = (Math.abs(v.x - optimo.x) < 1e-5 && Math.abs(v.y - optimo.y) < 1e-5);
+        html += `<li>(${v.x.toFixed(3)}, ${v.y.toFixed(3)}) → Z = ${v.z.toFixed(3)}${isOpt ? " <b>(Óptimo)</b>" : ""}</li>`;
+      });
+      html += "</ul>";
+      document.getElementById("vertices").innerHTML = html;
+      // Limpio tabla y análisis para cuando resuelvas Simplex
+      document.getElementById("tablaSimplex").innerHTML = "";
+      document.getElementById("analisis").innerHTML = "";
+    }
+
+    // --- Método Simplex paso a paso (2 variables, con restricciones <=) ---
+    // Para simplificar, asumimos que todas las restricciones son <=, y variables >= 0
+    // La función convertirá las restricciones en forma estándar y aplicará pivoteo iterativo.
+
+    function resolverSimplex() {
+      const tipo = document.getElementById("tipo").value;
+      const c1 = parseFloat(document.getElementById("c1").value);
+      const c2 = parseFloat(document.getElementById("c2").value);
+
+      const aEls = document.querySelectorAll(".a");
+      const bEls = document.querySelectorAll(".b");
+      const cEls = document.querySelectorAll(".c");
+      const signoEls = document.querySelectorAll(".signo");
+
+      // Preparar restricciones: convertir a forma ax + by <= c (si >=, multiplicar por -1)
+      let restricciones = [];
+      for (let i = 0; i < aEls.length; i++) {
+        let a = parseFloat(aEls[i].value);
+        let b = parseFloat(bEls[i].value);
+        let c = parseFloat(cEls[i].value);
+        let signo = signoEls[i].value;
+        if (signo === ">=") {
+          a = -a; b = -b; c = -c;
+        }
+        restricciones.push({ a, b, c });
+      }
+
+      // Variables: x, y, y variables holgura s1... sn
+      // Matriz simplex: filas: restricciones + fila Z
+      // columnas: x, y, s1...sn, RHS
+
+      const m = restricciones.length; // número de restricciones
+      const n = 2 + m; // variables x,y + holgura
+
+      // Construir tabla inicial simplex
+      // filas: m + 1 (restricciones + z)
+      // columnas: n + 1 (variables + RHS)
+      // Variables básicas inicialmente: s1...sm
+      let tabla = [];
+      for (let i = 0; i < m; i++) {
+        let fila = Array(n + 1).fill(0);
+        fila[0] = restricciones[i].a; // coef x
+        fila[1] = restricciones[i].b; // coef y
+        fila[2 + i] = 1; // variable holgura =1 para esta restriccion
+        fila[n] = restricciones[i].c; // RHS
+        tabla.push(fila);
+      }
+      // fila Z
+      let filaZ = Array(n + 1).fill(0);
+      filaZ[0] = tipo === "max" ? -c1 : c1; // Para maximizar -c porque se minimiza en simplex
+      filaZ[1] = tipo === "max" ? -c2 : c2;
+      filaZ[n] = 0;
+      tabla.push(filaZ);
+
+      // Variables básicas: inicialmente las holguras s1..sm, índices 2..2+m-1
+      let base = [];
+      for (let i = 0; i < m; i++) base.push(2 + i);
+
+      // Función para imprimir tabla en html
+      function imprimirTabla(tabla, base, iteracion) {
+        const varsNombres = ["x", "y"];
+        for (let i = 0; i < m; i++) varsNombres.push("s" + (i + 1));
+        let html = `<h3>Iteración ${iteracion}</h3><table><thead><tr><th>Base</th>`;
+        for (let j = 0; j < n; j++) {
+          html += `<th>${varsNombres[j]}</th>`;
+        }
+        html += "<th>Solución</th></tr></thead><tbody>";
+        for (let i = 0; i < m; i++) {
+          html += `<tr><td>${varsNombres[base[i]]}</td>`;
+          for (let j = 0; j <= n; j++) {
+            html += `<td>${tabla[i][j].toFixed(4)}</td>`;
+          }
+          html += "</tr>";
+        }
+        // fila Z
+        html += `<tr><td>Z</td>`;
+        for (let j = 0; j <= n; j++) {
+          html += `<td>${tabla[m][j].toFixed(4)}</td>`;
+        }
+        html += "</tr></tbody></table><br/>`;
+        return html;
+      }
+
+      let iter = 0;
+      let htmlTotal = "";
+      const MAX_ITER = 20;
+      while (iter < MAX_ITER) {
+        htmlTotal += imprimirTabla(tabla, base, iter);
+
+        // Seleccionar variable entrada (columna pivote)
+        // Regla: coeficiente más negativo en fila Z (para max)
+        let colPivote = -1;
+        let valPivote = 0;
+        for (let j = 0; j < n; j++) {
+          let val = tabla[m][j];
+          if (tipo === "max") {
+            if (val < valPivote) {
+              valPivote = val;
+              colPivote = j;
+            }
+          } else {
+            if (val > valPivote) {
+              valPivote = val;
+              colPivote = j;
+            }
+          }
+        }
+        // Si no hay coeficientes negativos (max) o positivos (min) en Z, terminamos
+        if (colPivote === -1) break;
+
+        // Seleccionar variable salida (fila pivote) usando razón mínima (RHS / coef positivo)
+        let filaPivote = -1;
+        let minRatio = Infinity;
+        for (let i = 0; i < m; i++) {
+          let coef = tabla[i][colPivote];
+          if (coef > 1e-10) {
+            let ratio = tabla[i][n] / coef;
+            if (ratio < minRatio) {
+              minRatio = ratio;
+              filaPivote = i;
+            }
+          }
+        }
+        if (filaPivote === -1) {
+          htmlTotal += "<b>El problema es no acotado.</b>";
+          break;
+        }
+
+        // Marcar pivote para la tabla (añadir clase CSS pivot para esa celda)
+        // Pero aquí sólo generamos html, no tabla DOM, así que no podemos usar clase CSS para eso.
+
+        // Pivoteo
+        const pivote = tabla[filaPivote][colPivote];
+        // Dividir fila pivote entre pivote
+        for (let j = 0; j <= n; j++) {
+          tabla[filaPivote][j] /= pivote;
+        }
+        // Para cada fila diferente a la pivote, hacer fila_i - coef* fila_pivote
+        for (let i = 0; i <= m; i++) {
+          if (i !== filaPivote) {
+            const factor = tabla[i][colPivote];
+            for (let j = 0; j <= n; j++) {
+              tabla[i][j] -= factor * tabla[filaPivote][j];
+            }
+          }
+        }
+
+        base[filaPivote] = colPivote;
+
+        iter++;
+      }
+
+      htmlTotal += imprimirTabla(tabla, base, iter);
+
+      // Solución óptima: variables básicas y sus valores, resto 0
+      let sol = Array(n).fill(0);
+      for (let i = 0; i < m; i++) {
+        if (base[i] < n) {
+          sol[base[i]] = tabla[i][n];
+        }
+      }
+      let zOpt = tabla[m][n];
+      if (tipo === "max") zOpt = -zOpt; // recordemos que invertimos signo
+
+      // Mostrar solución y análisis
+      let analisis = `<h3>Solución Óptima</h3>
+      <p>Z = ${zOpt.toFixed(4)}</p>
+      <p>x = ${sol[0].toFixed(4)}, y = ${sol[1].toFixed(4)}</p>
+      <h3>Análisis</h3>
+      <p>El método Simplex encontró la solución óptima tras ${iter} iteración(es). 
+      Las variables básicas representan las restricciones activas que limitan la solución. 
+      El valor de la función objetivo refleja el máximo (o mínimo) alcanzable con las restricciones dadas. 
+      Este proceso confirma la consistencia entre el análisis gráfico y algebraico.</p>`;
+
+      document.getElementById("tablaSimplex").innerHTML = htmlTotal;
+      document.getElementById("analisis").innerHTML = analisis;
+    }
+  </script>
+</body>
+</html>
